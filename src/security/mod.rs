@@ -1,29 +1,26 @@
 use uefi::prelude::*;
-use crate::drivers::screen::flash_security_alert;
+use crate::drivers::screen::draw_char;
 
 pub fn run_shell(system_table: &mut SystemTable<Boot>) {
-    // 1. On lit la touche sur stdin
     let stdin = system_table.stdin();
-    let mut trigger_alert = false;
+    let mut key_to_print: Option<char> = None;
 
     if let Ok(Some(key)) = stdin.read_key() {
         match key {
             uefi::proto::console::text::Key::Printable(ch) => {
-                if char::from(ch) == 'r' {
-                    trigger_alert = true;
-                }
+                key_to_print = Some(char::from(ch));
             }
             _ => {}
         }
     }
 
-    // 2. L'emprunt de stdin est terminé ici. On peut appeler librement les boot_services
     let boot_services = system_table.boot_services();
     
-    if trigger_alert {
-        flash_security_alert(boot_services);
+    if let Some(c) = key_to_print {
+        // On dessine le caractère saisi à la position (200, 200) dans notre terminal
+        draw_char(boot_services, c, 200, 200);
     }
 
-    // Pause de 10ms pour le processeur
+    // Temporisation de 10ms pour préserver l'exécution
     boot_services.stall(10_000);
 }
