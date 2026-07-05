@@ -2,9 +2,10 @@ use uefi::prelude::*;
 use uefi::proto::console::text::Key;
 use uefi::CStr16;
 use uefi::cstr16;
+use uefi::table::runtime::ResetType;
+use crate::drivers::fs::list_root_directory;
 
-// Tampon global fixe pour stocker les caractères de la commande en cours (max 64 caractères)
-static mut CMD_BUFFER: [char; 64] = ['\0'; 64] ;
+static mut CMD_BUFFER: [char; 64] = ['\0'; 64];
 static mut CMD_LEN: usize = 0;
 
 pub fn run_shell(system_table: &mut SystemTable<Boot>) {
@@ -16,48 +17,37 @@ pub fn run_shell(system_table: &mut SystemTable<Boot>) {
     }
 
     if let Some(key) = key_event {
-        let stdout = system_table.stdout();
-
         match key {
             Key::Printable(ch) => {
                 let c = char::from(ch);
 
-                // Si c'est Entrée (\r ou \n selon l'émulateur/clavier)
                 if c == '\r' || c == '\n' {
-                    let _ = stdout.output_string(cstr16!("\r\n"));
-                    
-                    // Traitement de la commande
+                    let _ = system_table.stdout().output_string(cstr16!("\r\n"));
                     unsafe {
-                        process_command(stdout);
+                        process_command(system_table);
                     }
-                    
-                    // Réaffichage du prompt
-                    let _ = stdout.output_string(cstr16!("sasori@laze:~$ "));
+                    let _ = system_table.stdout().output_string(cstr16!("sasori@laze:~$ "));
                 } 
-                // Si c'est Retour arrière (Backspace)
                 else if c == '\x08' {
                     unsafe {
                         if CMD_LEN > 0 {
                             CMD_LEN -= 1;
                             CMD_BUFFER[CMD_LEN] = '\0';
-                            // Recule le curseur, écrit un espace pour effacer, et recule à nouveau
-                            let _ = stdout.output_string(cstr16!("\x08 \x08"));
+                            let _ = system_table.stdout().output_string(cstr16!("\x08 \x08"));
                         }
                     }
                 } 
-                // Caractère standard : on l'ajoute au buffer si on a de la place
                 else {
                     unsafe {
                         if CMD_LEN < 63 {
                             CMD_BUFFER[CMD_LEN] = c;
                             CMD_LEN += 1;
                             
-                            // Affichage immédiat à l'écran
                             let mut buf = [0u16; 3];
                             let len = c.encode_utf16(&mut buf[0..2]).len();
                             buf[len] = 0;
                             if let Ok(cstr) = CStr16::from_u16_with_nul(&buf[0..=len]) {
-                                let _ = stdout.output_string(cstr);
+                                let _ = system_table.stdout().output_string(cstr);
                             }
                         }
                     }
@@ -70,31 +60,44 @@ pub fn run_shell(system_table: &mut SystemTable<Boot>) {
     system_table.boot_services().stall(10_000);
 }
 
-// Fonction de traitement des mots-clés de commandes Linux
-unsafe fn process_command(stdout: &mut uefi::proto::console::text::Output) {
-    // Vérification de la commande "clear"
+unsafe fn process_command(system_table: &mut SystemTable<Boot>) {
+    let stdout = system_table.stdout();
+
     if matches_cmd("clear") {
         let _ = stdout.clear();
     } 
-    // Vérification de la commande "help"
     else if matches_cmd("help") {
-        let _ = stdout.output_string(cstr16!("Available LAZE commands: help, clear, uname, exit\r\n"));
+        let _ = stdout.output_string(cstr16!("Commands: help, clear, uname, pwd, whoami, reboot, poweroff, ls\r\n"));
     } 
-    // Vérification de la commande "uname"
     else if matches_cmd("uname") {
-        let _ = stdout.output_string(cstr16!("LAZE microkernel 0.1.0-axis x86_64 uefi-mode\r\n"));
+        let _ = stdout.output_string(cstr16!("Linux laze 6.2026-axis #1 SMP PREEMPT Sasori x86_64 GNU/Linux\r\n"));
     } 
-    // Commande inconnue (sauf si vide)
+    else if matches_cmd("pwd") {
+        let _ = stdout.output_string(cstr16!("/home/sasori\r\n"));
+    } 
+    else if matches_cmd("whoami") {
+        let _ = stdout.output_string(cstr16!("sasori\r\n"));
+    } 
+    // VRAI ACCÈS MATÉRIEL AU DISQUE ICI
+    else if matches_cmd("ls") {
+        list_root_directory(system_table);
+    }
+    else if matches_cmd("reboot") {
+        let _ = stdout.output_string(cstr16!("Rebooting system via UEFI Runtime Services...\r\n"));
+        system_table.runtime_services().reset(ResetType::COLD, Status::SUCCESS, None);
+    } 
+    else if matches_cmd("poweroff") || matches_cmd("shutdown") {
+        let _ = stdout.output_string(cstr16!("Shutting down ACPI power state...\r\n"));
+        system_table.runtime_services().reset(ResetType::SHUTDOWN, Status::SUCCESS, None);
+    }
     else if CMD_LEN > 0 {
         let _ = stdout.output_string(cstr16!("laze: command not found\r\n"));
     }
 
-    // Réinitialisation complète du buffer pour la commande suivante
     CMD_LEN = 0;
     CMD_BUFFER = ['\0'; 64];
 }
 
-// Helper pour comparer le buffer statique brut avec une chaîne de caractères classique
 unsafe fn matches_cmd(expected: &str) -> bool {
     if expected.len() != CMD_LEN {
         return false;
