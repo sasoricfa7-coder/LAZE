@@ -6,7 +6,7 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- */ 
+ */
 
 #![no_std]
 #![no_main]
@@ -26,12 +26,16 @@ fn panic(_info: &PanicInfo) -> ! {
 fn main(_image_handle: Handle, system_table: SystemTable<Boot>) -> Status {
     uefi::helpers::init().unwrap();
 
-    // 1. Initialise l'affichage passif (L'écran bleu et la zone blanche)
-    drivers::screen::init_laze_screen(system_table.boot_services());
+    let boot_services = system_table.boot_services();
 
-    // 2. Boucle d'exécution du Micro-noyau (Surveillance constante)
+    // 1. Initialise l'affichage passif
+    drivers::screen::init_laze_screen(boot_services);
+
+    // 2. Découpe la RAM en zones étanches et fixes (Stade 4)
+    drivers::memory::map_laze_memory(boot_services);
+
+    // 3. Boucle d'exécution du Micro-noyau
     loop {
-        // Écoute le matériel et gère les zones de manière isolée
-        security::run_shell(system_table.boot_services(), &system_table);
+        security::run_shell(boot_services, &system_table);
     }
 }
