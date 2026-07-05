@@ -1,5 +1,5 @@
 use uefi::prelude::*;
-use crate::drivers::screen::draw_char;
+use uefi::CStr16;
 
 pub fn run_shell(system_table: &mut SystemTable<Boot>) {
     let stdin = system_table.stdin();
@@ -14,13 +14,18 @@ pub fn run_shell(system_table: &mut SystemTable<Boot>) {
         }
     }
 
-    let boot_services = system_table.boot_services();
-    
     if let Some(c) = key_to_print {
-        // On dessine le caractère saisi à la position (200, 200) dans notre terminal
-        draw_char(boot_services, c, 200, 200);
+        let stdout = system_table.stdout();
+        
+        // Initialisé à 0, donc le \0 terminal est garanti dès le départ
+        let mut buf = [0u16; 3]; 
+        let len = c.encode_utf16(&mut buf[0..2]).len();
+
+        // On crée le CStr16 sur la partie écrite + le zéro qui suit
+        if let Ok(cstr) = CStr16::from_u16_with_nul(&buf[0..=len]) {
+            let _ = stdout.output_string(cstr);
+        }
     }
 
-    // Temporisation de 10ms pour préserver l'exécution
-    boot_services.stall(10_000);
+    system_table.boot_services().stall(10_000);
 }

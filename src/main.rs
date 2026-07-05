@@ -26,11 +26,13 @@ fn panic(_info: &PanicInfo) -> ! {
 fn main(_image_handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi::helpers::init().unwrap();
 
-    // 1. Initialisations initiales uniques
-    drivers::screen::init_laze_screen(system_table.boot_services());
+    // 1. Initialise la console texte standard
+    drivers::screen::init_laze_screen(&mut system_table);
+
+    // 2. Découpe la RAM
     drivers::memory::map_laze_memory(system_table.boot_services());
 
-    // 2. Boucle principale : on passe la main de façon exclusive au gestionnaire
+    // 3. Boucle infinie sur le Shell console autonome
     loop {
         security::run_shell(&mut system_table);
     }
