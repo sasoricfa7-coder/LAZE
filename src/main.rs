@@ -26,13 +26,11 @@ fn panic(_info: &PanicInfo) -> ! {
 fn main(_image_handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi::helpers::init().unwrap();
 
-    // 1. Initialise l'affichage passif
+    // 1. Initialisations initiales uniques
     drivers::screen::init_laze_screen(system_table.boot_services());
-
-    // 2. Découpe la RAM
     drivers::memory::map_laze_memory(system_table.boot_services());
 
-    // 3. Boucle d'exécution du Micro-noyau (system_table est totalement libre ici !)
+    // 2. Boucle principale : on passe la main de façon exclusive au gestionnaire
     loop {
         security::run_shell(&mut system_table);
     }
