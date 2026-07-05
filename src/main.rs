@@ -23,19 +23,17 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 #[entry]
-fn main(_image_handle: Handle, system_table: SystemTable<Boot>) -> Status {
+fn main(_image_handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi::helpers::init().unwrap();
 
-    let boot_services = system_table.boot_services();
-
     // 1. Initialise l'affichage passif
-    drivers::screen::init_laze_screen(boot_services);
+    drivers::screen::init_laze_screen(system_table.boot_services());
 
-    // 2. Découpe la RAM en zones étanches et fixes (Stade 4)
-    drivers::memory::map_laze_memory(boot_services);
+    // 2. Découpe la RAM
+    drivers::memory::map_laze_memory(system_table.boot_services());
 
-    // 3. Boucle d'exécution du Micro-noyau
+    // 3. Boucle d'exécution du Micro-noyau (system_table est totalement libre ici !)
     loop {
-        security::run_shell(boot_services, &system_table);
+        security::run_shell(&mut system_table);
     }
 }
