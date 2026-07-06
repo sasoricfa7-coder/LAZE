@@ -1,53 +1,90 @@
+use core::cell::UnsafeCell;
 use uefi::prelude::*;
 use uefi::proto::media::fs::SimpleFileSystem;
+use uefi::proto::media::file::{File, FileAttribute, FileMode};
+use uefi::{CStr16, cstr16, Identify};
+use uefi::table::boot::SearchType;
 
-pub fn list_root_directory(system_table: &mut SystemTable<Boot>) {
-    let mut file_names = [[0u16; 32]; 10];
-    let mut file_count = 0;
+pub struct FileSystemManager {
+    pub working_volume: Option<uefi::Handle>,
+}
 
-    {
-        let boot_services = system_table.boot_services();
-
-        if let Ok(fs_handle) = boot_services.get_handle_for_protocol::<SimpleFileSystem>() {
-            if let Ok(mut fs) = boot_services.open_protocol_exclusive::<SimpleFileSystem>(fs_handle) {
-                if let Ok(mut root) = fs.open_volume() {
-                    let mut buffer = [0u8; 512];
-                    
-                    while file_count < 10 {
-                        match root.read_entry(&mut buffer) {
-                            Ok(Some(file_info)) => {
-                                let name = file_info.file_name();
-                                let mut i = 0;
-                                for c in name.iter() {
-                                    if i < 31 {
-                                        // Correction du type ici : conversion de Char16 en u16
-                                        file_names[file_count][i] = u16::from(*c);
-                                        i += 1;
-                                    }
-                                }
-                                file_names[file_count][i] = 0;
-                                file_count += 1;
-                            }
-                            _ => break,
+impl FileSystemManager {
+    pub fn init(&mut self, boot_services: &BootServices) {
+        if let Ok(handles) = boot_services.locate_handle_buffer(SearchType::ByProtocol(&SimpleFileSystem::GUID)) {
+            for handle in handles.iter() {
+                if let Ok(mut fs) = boot_services.open_protocol_exclusive::<SimpleFileSystem>(*handle) {
+                    if let Ok(mut root) = fs.open_volume() {
+                        if root.open(cstr16!("LAZE.TXT"), FileMode::Read, FileAttribute::empty()).is_ok() {
+                            self.working_volume = Some(*handle);
+                            break;
                         }
                     }
                 }
             }
         }
     }
+}
 
-    let stdout = system_table.stdout();
+pub struct SafeFSManager(UnsafeCell<FileSystemManager>);
+unsafe impl Sync for SafeFSManager {}
 
-    if file_count == 0 {
-        let _ = stdout.output_string(uefi::cstr16!("Erreur : Impossible de lire le disque ou repertoire vide.\r\n"));
-        return;
+pub static FS_MANAGER: SafeFSManager = SafeFSManager(UnsafeCell::new(FileSystemManager {
+    working_volume: None,
+}));
+
+impl SafeFSManager {
+    pub fn get_mut(&self) -> &mut FileSystemManager {
+        unsafe { &mut *self.0.get() }
     }
+}
 
-    for i in 0..file_count {
-        if let Ok(cstr) = uefi::CStr16::from_u16_with_nul(&file_names[i]) {
-            let _ = stdout.output_string(cstr);
-            let _ = stdout.output_string(uefi::cstr16!("   "));
+pub fn list_root_directory(system_table: &mut SystemTable<Boot>) {
+    if let Some(handle) = FS_MANAGER.get_mut().working_volume {
+        let mut fs = system_table.boot_services().open_protocol_exclusive::<SimpleFileSystem>(handle).unwrap();
+        let mut root = fs.open_volume().unwrap();
+        drop(fs);
+
+        let stdout = system_table.stdout();
+        let _ = stdout.output_string(cstr16!("Fichiers :\r\n"));
+
+        let mut buf = [0u8; 256];
+        loop {
+            match root.read_entry(&mut buf) {
+                Ok(Some(info)) => {
+                    let name = info.file_name();
+                    if name != cstr16!(".") && name != cstr16!("..") {
+                        let _ = stdout.output_string(name);
+                        let _ = stdout.output_string(cstr16!("  "));
+                    }
+                }
+                _ => break,
+            }
+        }
+        let _ = stdout.output_string(cstr16!("\r\n"));
+    }
+}
+
+pub fn cat_target_file(system_table: &mut SystemTable<Boot>) {
+    let mut buf = [0u8; 128];
+    let mut read_len = 0;
+
+    if let Some(handle) = FS_MANAGER.get_mut().working_volume {
+        let mut fs = system_table.boot_services().open_protocol_exclusive::<SimpleFileSystem>(handle).unwrap();
+        let mut root = fs.open_volume().unwrap();
+        drop(fs);
+
+        if let Ok(file_handle) = root.open(cstr16!("LAZE.TXT"), FileMode::Read, FileAttribute::empty()) {
+            if let Some(mut file) = file_handle.into_regular_file() {
+                read_len = file.read(&mut buf).unwrap_or(0);
+            }
         }
     }
-    let _ = stdout.output_string(uefi::cstr16!("\r\n"));
+
+    let stdout = system_table.stdout();
+    for i in 0..read_len {
+        let cstr = [buf[i] as u16, 0];
+        let _ = stdout.output_string(CStr16::from_u16_with_nul(&cstr).unwrap());
+    }
+    let _ = stdout.output_string(cstr16!("\r\n"));
 }

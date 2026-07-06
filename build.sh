@@ -1,20 +1,34 @@
 #!/bin/bash
 set -e
 
-# 1. Nettoyer
-rm -rf esp/
+# 1. Nettoyer les anciens résidus
+rm -f laze_disk.img
 
-# 2. Compiler pour l'architecture UEFI 64 bits standard
+# 2. Compiler le noyau
 cargo build --target x86_64-unknown-uefi --release
 
-# 3. Créer l'arborescence de fichiers requise par la norme UEFI
-mkdir -p esp/EFI/BOOT
+# 3. Créer une image disque de 64 Mo
+dd if=/dev/zero of=laze_disk.img bs=1M count=64
 
-# 4. Copier le binaire UEFI généré au bon endroit sous le nom standardisé
-cp target/x86_64-unknown-uefi/release/laze.efi esp/EFI/BOOT/BOOTX64.EFI
+# 4. Formater en FAT32
+mkfs.vfat -F 32 laze_disk.img
 
-# 5. Lancer QEMU avec la syntaxe de lecteur FAT standardisée
+# 5. Créer l'arborescence et copier les fichiers
+mmd -i laze_disk.img ::/EFI
+mmd -i laze_disk.img ::/EFI/BOOT
+mcopy -i laze_disk.img target/x86_64-unknown-uefi/release/laze.efi ::/EFI/BOOT/BOOTX64.EFI
+
+# Créer LAZE.TXT en majuscules à la racine
+echo "Salutations depuis le VRAI disque de LAZE OS !" > temp_laze.txt
+mcopy -i laze_disk.img temp_laze.txt ::/LAZE.TXT
+rm temp_laze.txt
+
+
+# Vérifier ce qu'il y a dans l'image avant de lancer
+mdir -i laze_disk.img ::/
+
+# 6. Lancer QEMU sans warnings
 qemu-system-x86_64 \
     -bios /usr/share/ovmf/OVMF.fd \
-    -drive file=fat:rw:esp,format=raw \
+    -drive file=laze_disk.img,format=raw \
     -net none
